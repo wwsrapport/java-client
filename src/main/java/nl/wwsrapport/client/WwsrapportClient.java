@@ -66,6 +66,26 @@ public final class WwsrapportClient {
         return getJson("/reports/" + encodePath(reportId) + "/improvement-advice", Map.of());
     }
 
+    public String getReportVerification(String reportId) {
+        return getJson("/reports/" + encodePath(reportId) + "/verification", Map.of());
+    }
+
+    public String deriveBagReference(String bagVboId) {
+        validateBagVboId(bagVboId);
+        return post("/registry/bag-reference", "{\"bagVboId\":\"" + bagVboId + "\"}", null);
+    }
+
+    public String searchRegistryByBag(String bagVboId) {
+        validateBagVboId(bagVboId);
+        return post("/registry/search-by-bag", "{\"bagVboId\":\"" + bagVboId + "\"}", null);
+    }
+
+    private static void validateBagVboId(String value) {
+        if (value == null || !value.matches("[0-9]{16}")) {
+            throw new IllegalArgumentException("BAG verblijfsobject ID must contain exactly sixteen digits.");
+        }
+    }
+
     public String listDocuments(String reportId) {
         return getJson("/reports/" + encodePath(reportId) + "/documents", Map.of());
     }

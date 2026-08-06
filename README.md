@@ -2,6 +2,8 @@
 
 Official Java SDK for the WWSrapport API.
 
+`deriveBagReference`, `searchRegistryByBag` and `getReportVerification` expose the Solana attestation flow. `WebhookEvents.ALL` contains all 27 supported event types.
+
 ## Links
 
 - API overview and Swagger: https://wwsrapport.nl/api/docs
@@ -79,4 +81,3 @@ The signature format is `v1=<hex-hmac-sha256>`, signed over:
 ```bash
 mvn test
 ```
-
