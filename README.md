@@ -19,7 +19,7 @@ Until the package is published to Maven Central, use this repository as a source
 <dependency>
   <groupId>nl.wwsrapport</groupId>
   <artifactId>wwsrapport-client</artifactId>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
 </dependency>
 ```
 
