@@ -14,7 +14,7 @@ import java.util.StringJoiner;
 
 public final class WwsrapportClient {
     private static final String DEFAULT_BASE_URL = "https://wwsrapport.nl/v1";
-    private static final String CLIENT_HEADER = "wwsrapport-java-client/0.2.0";
+    private static final String CLIENT_HEADER = "wwsrapport-java-client/0.2.1";
 
     private final String apiKey;
     private final String baseUrl;
