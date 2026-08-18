@@ -19,7 +19,7 @@ Until the package is published to Maven Central, use this repository as a source
 <dependency>
   <groupId>nl.wwsrapport</groupId>
   <artifactId>wwsrapport-client</artifactId>
-  <version>0.2.1</version>
+  <version>0.3.0</version>
 </dependency>
 ```
 
@@ -56,6 +56,12 @@ System.out.println(report);
 - WWS report and improvement advice PDF downloads
 - Usage and rulesets
 - Webhook endpoint management, test deliveries and retries
+- OAuth 2.0 client credentials alongside API keys
+- Public-sector request context (municipality, purpose, case and client reference)
+- Batch jobs, human review, tenant exports and controlled offboarding
+
+Use the OAuth client-credentials constructor and `withRequestContext` for approved
+public-sector integrations. Existing API-key integrations remain compatible.
 
 Report creation and recalculation require an `Idempotency-Key`.
 

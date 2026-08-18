@@ -8,17 +8,40 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.Base64;
 import java.util.Map;
 import java.util.Objects;
 import java.util.StringJoiner;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class WwsrapportClient {
     private static final String DEFAULT_BASE_URL = "https://wwsrapport.nl/v1";
-    private static final String CLIENT_HEADER = "wwsrapport-java-client/0.2.1";
+    private static final String CLIENT_HEADER = "wwsrapport-java-client/0.3.0";
 
     private final String apiKey;
+    private final OAuthClientCredentials oauth;
+    private final RequestContext requestContext;
     private final String baseUrl;
     private final HttpClient httpClient;
+    private String accessToken;
+    private Instant tokenExpiresAt = Instant.EPOCH;
+
+    public static final class OAuthClientCredentials {
+        public final String clientId, clientSecret, tokenUrl, scope;
+        public OAuthClientCredentials(String clientId, String clientSecret, String tokenUrl, String scope) {
+            this.clientId = requireNotBlank(clientId, "clientId"); this.clientSecret = requireNotBlank(clientSecret, "clientSecret");
+            this.tokenUrl = tokenUrl; this.scope = scope;
+        }
+    }
+
+    public static final class RequestContext {
+        public final String municipalityCode, purposeCode, caseReference, clientReference;
+        public RequestContext(String municipalityCode, String purposeCode, String caseReference, String clientReference) {
+            this.municipalityCode = municipalityCode; this.purposeCode = purposeCode; this.caseReference = caseReference; this.clientReference = clientReference;
+        }
+    }
 
     public WwsrapportClient(String apiKey) {
         this(apiKey, DEFAULT_BASE_URL, HttpClient.newHttpClient());
@@ -26,6 +49,16 @@ public final class WwsrapportClient {
 
     public WwsrapportClient(String apiKey, String baseUrl, HttpClient httpClient) {
         this.apiKey = requireNotBlank(apiKey, "apiKey");
+        this.oauth = null;
+        this.requestContext = null;
+        this.baseUrl = trimTrailingSlash(requireNotBlank(baseUrl, "baseUrl"));
+        this.httpClient = Objects.requireNonNull(httpClient, "httpClient");
+    }
+
+    public WwsrapportClient(OAuthClientCredentials oauth, RequestContext requestContext, String baseUrl, HttpClient httpClient) {
+        this.apiKey = null;
+        this.oauth = Objects.requireNonNull(oauth, "oauth");
+        this.requestContext = requestContext;
         this.baseUrl = trimTrailingSlash(requireNotBlank(baseUrl, "baseUrl"));
         this.httpClient = Objects.requireNonNull(httpClient, "httpClient");
     }
@@ -68,6 +101,20 @@ public final class WwsrapportClient {
 
     public String getReportVerification(String reportId) {
         return getJson("/reports/" + encodePath(reportId) + "/verification", Map.of());
+    }
+
+    public String reviewReport(String reportId, String reviewJson, String idempotencyKey) {
+        return post("/reports/" + encodePath(reportId) + "/human-review", reviewJson, requireNotBlank(idempotencyKey, "idempotencyKey"));
+    }
+
+    public String createBatch(String batchJson, String idempotencyKey) { return post("/batches", batchJson, requireNotBlank(idempotencyKey, "idempotencyKey")); }
+    public String getBatch(String id) { return getJson("/batches/" + encodePath(id), Map.of()); }
+    public String retryBatch(String id, String idempotencyKey) { return post("/batches/" + encodePath(id) + "/retry", null, requireNotBlank(idempotencyKey, "idempotencyKey")); }
+    public String requestTenantExport(String idempotencyKey) { return post("/exports", null, requireNotBlank(idempotencyKey, "idempotencyKey")); }
+    public String getTenantExport(String id) { return getJson("/exports/" + encodePath(id), Map.of()); }
+    public String createTenantExportDownloadUrl(String id) { return post("/exports/" + encodePath(id) + "/download-url", null, null); }
+    public String requestOffboarding(String reference, String reason) {
+        return post("/offboarding", "{\"confirmation\":\"REQUEST_OFFBOARDING\",\"requested_by_reference\":\"" + jsonEscape(reference) + "\",\"reason\":\"" + jsonEscape(reason) + "\"}", null);
     }
 
     public String deriveBagReference(String bagVboId) {
@@ -167,11 +214,14 @@ public final class WwsrapportClient {
     }
 
     private HttpResponse<byte[]> send(String method, String path, Map<String, ?> query, String body, String idempotencyKey, String accept) {
+        String bearerToken = bearerToken();
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri(path, query))
             .timeout(Duration.ofSeconds(30))
             .header("Accept", accept)
-            .header("Authorization", "Bearer " + apiKey)
+            .header("Authorization", "Bearer " + bearerToken)
             .header("X-WWSrapport-Client", CLIENT_HEADER);
+
+        applyRequestContext(builder);
 
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
             builder.header("Idempotency-Key", idempotencyKey);
@@ -197,6 +247,40 @@ public final class WwsrapportClient {
             throw new WwsrapportException("WWSrapport API request interrupted.", 0, null, null, e);
         }
     }
+
+    private synchronized String bearerToken() {
+        if (apiKey != null && !apiKey.isBlank()) return apiKey;
+        if (accessToken != null && Instant.now().plusSeconds(30).isBefore(tokenExpiresAt)) return accessToken;
+        String tokenUrl = oauth.tokenUrl;
+        if (tokenUrl == null || tokenUrl.isBlank()) {
+            URI base = URI.create(baseUrl);
+            tokenUrl = base.getScheme() + "://" + base.getAuthority() + "/oauth/token";
+        }
+        String form = "grant_type=client_credentials" + (oauth.scope == null || oauth.scope.isBlank() ? "" : "&scope=" + encode(oauth.scope));
+        String basic = Base64.getEncoder().encodeToString((oauth.clientId + ":" + oauth.clientSecret).getBytes(StandardCharsets.UTF_8));
+        HttpRequest request = HttpRequest.newBuilder(URI.create(tokenUrl)).timeout(Duration.ofSeconds(30))
+            .header("Accept", "application/json").header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Authorization", "Basic " + basic).POST(HttpRequest.BodyPublishers.ofString(form)).build();
+        try {
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() < 200 || response.statusCode() >= 300) throw WwsrapportException.fromResponse(response.statusCode(), response.headers().firstValue("X-Request-Id").orElse(null), response.body().getBytes(StandardCharsets.UTF_8));
+            Matcher token = Pattern.compile("\\\"access_token\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"").matcher(response.body());
+            if (!token.find()) throw new WwsrapportException("OAuth response has no access_token.", 0, null, null, null);
+            Matcher expires = Pattern.compile("\\\"expires_in\\\"\\s*:\\s*(\\d+)").matcher(response.body());
+            long seconds = expires.find() ? Long.parseLong(expires.group(1)) : 300;
+            accessToken = token.group(1); tokenExpiresAt = Instant.now().plusSeconds(seconds); return accessToken;
+        } catch (IOException e) { throw new WwsrapportException("WWSrapport OAuth request failed: " + e.getMessage(), 0, null, null, e); }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new WwsrapportException("WWSrapport OAuth request interrupted.", 0, null, null, e); }
+    }
+
+    private void applyRequestContext(HttpRequest.Builder builder) {
+        if (requestContext == null) return;
+        header(builder, "X-WWS-Municipality-Code", requestContext.municipalityCode); header(builder, "X-WWS-Purpose-Code", requestContext.purposeCode);
+        header(builder, "X-WWS-Case-Reference", requestContext.caseReference); header(builder, "X-WWS-Client-Reference", requestContext.clientReference);
+    }
+
+    private static void header(HttpRequest.Builder builder, String name, String value) { if (value != null && !value.isBlank()) builder.header(name, value); }
+    private static String jsonEscape(String value) { return value == null ? "" : value.replace("\\", "\\\\").replace("\"", "\\\""); }
 
     private URI uri(String path, Map<String, ?> query) {
         StringBuilder uri = new StringBuilder(baseUrl).append('/').append(path.replaceFirst("^/+", ""));

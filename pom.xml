@@ -6,7 +6,7 @@
 
   <groupId>nl.wwsrapport</groupId>
   <artifactId>wwsrapport-client</artifactId>
-  <version>0.2.1</version>
+  <version>0.3.0</version>
   <name>WWSrapport Java client</name>
   <description>Official Java SDK for the WWSrapport API.</description>
   <url>https://wwsrapport.nl/api/docs</url>
